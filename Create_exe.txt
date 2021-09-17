@@ -1,0 +1,1 @@
+pyinstaller --onefile --windowed --icon=shell32_337.ico 4traces_V02.py
