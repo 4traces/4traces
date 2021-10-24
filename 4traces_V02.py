@@ -26,13 +26,6 @@ import winreg as _winreg
 import datetime
 import matplotlib.pyplot as plt
 
-
-
-new_Row = []
-new_Row.append(QStandardItem("Test 1"))
-new_Row.append(QStandardItem("Test 2"))
-root.appendrow(new_Row)
-
 # creating checkable combo box class
 class CheckableComboBox(QComboBox):
     def __init__(self):
@@ -529,6 +522,11 @@ def start_neo4j_api():
     driver = GraphDatabase.driver(config["Server"], auth=(config["Server_Login"], config["Server_PW"]))
     return driver
 
+def get_config_value(key_name: str):
+    with open('./Input/config.json') as json_file:
+        config = json.load(json_file)
+
+    return config[key_name]
 
 def cleanup_database(driver):
     # ################################################################################################################
@@ -778,6 +776,11 @@ class Query_Dialog(QDialog):
 class Ui_MainWindow(object):
     def setupUi(self, MainWindow):
         self.driver = start_neo4j_api()
+
+        self.currentuser = {}
+        self.currentuser.update({"UserID": get_config_value("UserID")})
+        self.currentuser.update({"UserKey": get_config_value("UserKey")})
+
         cleanup_database(self.driver)
         self.databyid = {}
         self.treeView_1_selected = []
@@ -820,7 +823,7 @@ class Ui_MainWindow(object):
         self.headers.append(['Title', 'Type', 'NeoID', 'Parent Link', 'Details', 'Key', 'ModifyDate', 'DeepLink',
                              'Comment', 'Component', 'Description', 'Origin', 'Priority', 'Responsible'])
         self.headers.append(['Title', 'Type', 'NeoID'])
-        self.headers.append(['Title', 'Type', 'NeoID', 'Parent Link'])
+        self.headers.append(['Title', 'Type', 'NeoID', 'Parent Link', 'Details', 'Key', ])
 
         self.table_model = QStandardItemModel()
         self.table_model.setHorizontalHeaderLabels(['Attribute', 'Value'])
@@ -1773,8 +1776,8 @@ class Ui_MainWindow(object):
     def neo_safe_database(self):
         current_time = str(time.time()).replace('.', '_')
         with self.driver.session() as session:
-            session.run('CALL apoc.export.cypher.all("all-plain' + current_time + '.cypher", {format: "plain"})')
-            session.run('CALL apoc.export.cypher.all("C:/Arbeitsbereich/' + current_time + '.cypher", {format: "plain"})')
+            session.run('CALL apoc.export.cypher.all("all-plain.cypher", {format: "plain"})')
+            # session.run('CALL apoc.export.cypher.all("C:/Arbeitsbereich/' + current_time + '.cypher", {format: "plain"})')
         session.close()
 
     def update_attributes(self, combo_nr: int):
@@ -2194,7 +2197,7 @@ class Ui_MainWindow(object):
         else:
             qry_cmd_Lst.append('CREATE (a:' + new_node_label + ' {Title: \"New ' + new_node_label + '\"' + common_attributes + '})')
 
-        qry_cmd_Lst.append('SET a.CreatedIn = \"' + current_hooknode + '\"')
+        qry_cmd_Lst.append('SET a.SSOT = \"' + current_hooknode + '\"')
 
         if current_scope == 'System':
             qry_cmd_Lst.append('MERGE (b)-[:has {HookNode: \"' + current_hooknode + '\"}]->(a)')
@@ -2218,14 +2221,17 @@ class Ui_MainWindow(object):
 
     def neo_down_query_has(self, node_id: int, level_depth: int, use_hooknode: bool, HookNode_in: str, json_yn: bool):
         qry_cmd_Lst = []
+        qry_cmd_Lst.append('MATCH (u:Person) WHERE u.Key = \"' + str(self.currentuser["UserID"]) + '\"')
+        qry_cmd_Lst.append('MATCH (u)<-[]-(sc:SecurityContext)-[:can_write]->(y)')
         qry_cmd_Lst.append('MATCH (x) WHERE ID(x) = ' + str(node_id))
-        qry_cmd_Lst.append('MATCH path = (x)-[rr*0..' + str(level_depth) + ']->(y)')
-        qry_cmd_Lst.append('WHERE ALL(r in rr')
-        qry_cmd_Lst.append('WHERE type(r) <> ""')
+        qry_cmd_Lst.append('MATCH path = (x)-[*0..' + str(level_depth) + ']->(y)')
+        qry_cmd_Lst.append('WITH path, relationships(path) AS rr,x ,y')
         if use_hooknode:
-            qry_cmd_Lst.append('AND r.HookNode = \"' + HookNode_in + '\"')
-        qry_cmd_Lst.append(')')  # Klammer wird weiter oben geöffnet
-        qry_cmd_Lst.append('WITH collect(path) as paths ')
+            qry_cmd_Lst.append('WHERE ALL(r in rr')
+            qry_cmd_Lst.append('WHERE r.HookNode = \"' + HookNode_in + '\"')
+            qry_cmd_Lst.append(')')  # Klammer wird weiter oben geöffnet
+        qry_cmd_Lst.append('WITH collect(path) as paths,  COUNT(y) as nn')
+        qry_cmd_Lst.append('WHERE nn < 2000 AND nn > 0')
         qry_cmd_Lst.append('CALL apoc.convert.toTree(paths) yield value')
         qry_cmd_Lst.append('return value')
         qry = ' '.join(qry_cmd_Lst)
@@ -2782,6 +2788,7 @@ class Ui_MainWindow(object):
 
             else:
                 # Upwards / Parent Query
+                # Upwards / Parent Query
                 print("# Upwards / Parent Query")
                 data = self.neo_up_query_has(dbid, 2)
                 header = self.headers[2]
@@ -2796,6 +2803,7 @@ class Ui_MainWindow(object):
                 q_header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeToContents)
                 q_header.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeToContents)
 
+                # Downwards / Parent Query
                 # Downwards / Parent Query
                 print("# Downwards / Child Query")
                 HookNode_in = ""
@@ -2818,7 +2826,7 @@ class Ui_MainWindow(object):
                         header = []
                         header.extend(self.get_header_of_querry(extracted_data, self.headers[0]))
                         print("Start Printer")
-                        self.printer(data_for_expand, qitem, self.headers[2])
+                        self.printer(data_for_expand, qitem, header)
 
                         if (qmodel == self.model_tree_1):
                             self.treeView_1.expand(qmodel_intex)
@@ -2987,13 +2995,12 @@ class Ui_MainWindow(object):
                 value_name = value_name.replace("\\", "/")
                 value_name = value_name.replace("\"", "")
 
-                # if "//collaboration.claas.com" in value_name:
-                #     value_name = value_name.replace("https:", "")
-                #     value_name = value_name.replace("%20", " ")
-
                 Value.update({key_name: value_name})
 
         print(Value)
+        currenttime = datetime.datetime.now().strftime("%Y.%m.%d %H:%M:%S")
+        Value.update({"LastNodeModifyDate": currenttime})
+        Value.update({"LastNodeModifier": self.currentuser["UserID"]})
         self.neo_edit_node(Value)
 
         qmodel_intex = self.currentitemindex
